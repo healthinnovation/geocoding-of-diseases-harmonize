@@ -1,0 +1,234 @@
+---
+title: "Geocoding of Diseases on the Iquitos - Nauta road, Loreto - Peru 📍🦟🛣️"
+author: <i class="bi bi-people-fill"></i> Antony Barja & Bryan Fernandez, Innovalab - 2023 <img src='https://raw.githubusercontent.com/healthinnovation/innovar/master/man/figures/logo.png' width='40px'/>
+mainfont: Roboto Slab
+format: 
+ html:
+   toc: true
+editor: visual
+theme:
+  light: flatly
+  dark: darkly
+---
+
+## Requeriments
+
+```{r}
+#| echo: true
+#| warning: false
+#| message: false
+library(tidyverse)
+library(tidygeocoder)
+library(sf)
+library(leaflet)
+library(cptcity)
+```
+
+## 1. Reading data processed
+
+```{r}
+#| warning: false
+#| message: false
+cases_reported <- read_csv('data/cases-report-geo-edited.csv')
+```
+
+```{r}
+#| warning: false
+#| message: false
+cases_reported |> 
+  DT::datatable(
+    options = list(display = "compact", pageLength = 5, scrollX = TRUE)
+  )
+```
+
+## 2. Geocoding with the MapBox API 
+For use 100 000 request by month free.
+
+Link: <https://www.mapbox.com/pricing/#search>
+
+For to use MapBox API is necessary storage the personal TOKEN in the R environment. This step you can to do using the next code:
+
+```
+usethis::edit_r_environ()
+MAPBOX_API_KEY="YourAPIKeyHere"
+
+```
+
+```{r}
+#| warning: false
+#| message: false
+cases_reported |> 
+    mutate(
+     country = 'PERU',
+     dep = 'LORETO',
+     prov = 'MAYNAS',
+     dist = 'SAN JUAN BAUTISTA',
+     nogeo = sprintf(
+       '%s,%s,%s,%s,%s,CENTRO POBLADO DE %s',
+       country,
+       dep,
+       prov,
+       dist,
+       ccpp_name,
+       str_to_upper(address)),
+     geocode = geo(nogeo,method = "mapbox"),
+     lat = geocode$lat,
+     long = geocode$long
+     ) |>
+  select(-c(geocode)) -> geocode_cases_reported
+```
+
+```{r}
+#| warning: false
+#| message: false
+geocode_cases_reported |> 
+  DT::datatable(
+    options = list(display = "compact", pageLength = 5, scrollX = TRUE)
+  )
+```
+
+## 3. Analysis of geocoding data of diseases
+
+```{r}
+#| warning: false
+#| message: false
+stats <- geocode_cases_reported |>
+  mutate(
+    id_geocode = 
+      case_when(
+        is.na(lat) ~ 'No Geocoded',
+        TRUE ~ 'Geocoded'
+        )
+    ) |> 
+  group_by(id_geocode) |> 
+  summarise(total = n()) |> 
+  mutate(percentage = total*100/sum(total))
+```
+
+```{r}
+#| warning: false
+#| message: false
+stats |> 
+  ggplot(aes(x = id_geocode, y = percentage)) +
+  geom_bar(stat = "identity", fill = '#086375',alpha = 0.5) + 
+  geom_text(aes(label = round(percentage,2)),vjust= -0.5) + 
+  theme_minimal()
+```
+
+## 4. No geocoding 
+
+```{r}
+#| warning: false
+#| message: false
+#| 
+review_data <- geocode_cases_reported |> 
+  filter(is.na(lat) | is.na(lat))
+```
+
+```{r}
+#| warning: false
+#| message: false
+review_data |> 
+  DT::datatable(
+    options = list(display = "compact", pageLength = 5, scrollX = TRUE)
+  )
+```
+
+## 5. Repair address 
+
+- Replace "#"
+- Remove "/AAHH LAS BRISAS2"
+- Remove "N-"
+- Replace "CA. " by CALLE
+- Replace "AH " by ASENTAMIENTO HUMANO
+
+```{r}
+#| warning: false
+#| message: false
+review_data <- geocode_cases_reported |> 
+  filter(is.na(lat) | is.na(lat)) |>
+  mutate(
+    address = gsub("#", "", address),
+    address = gsub("/AAHH LAS BRISAS2", "", address),
+    address = gsub("N-", "", address),
+    address = gsub("CA. ", "CALLE ", address),
+    address = gsub("AH", "ASENTAMIENTO HUMANO ", address),
+    address = gsub("/AAHH", "ASENTAMIENTO HUMANO ", address),
+    address = gsub("MZA.", "MZ ", address),
+    address = gsub("AA. HH", "ASENTAMIENTO HUMANO ", address),
+    address = gsub("/AASENTAMIENTO HUMANO H LAS BRISAS", " ASENTAMIENTO HUMANO LAS BRISAS", address)
+  )
+```
+
+## 6. Geocoding with the MapBox API again
+
+```{r}
+#| warning: false
+#| message: false
+geocode_review_data <- review_data |> 
+  mutate(
+     country = 'PERU',
+     dep = 'LORETO',
+     prov = 'MAYNAS',
+     dist = 'SAN JUAN BAUTISTA',
+     nogeo = sprintf(
+       '%s,%s,%s,%s,%s,CENTRO POBLADO DE %s',
+       country,
+       dep,
+       prov,
+       dist,
+       ccpp_name,
+       str_to_upper(address)),
+     geocode = geo(nogeo,method = "mapbox"),
+     lat = geocode$lat,
+     long = geocode$long
+     ) |>
+  select(-c(geocode))
+```
+
+```{r}
+#| warning: false
+#| message: false
+geocode_review_data |> 
+  DT::datatable(
+    options = list(display = "compact", pageLength = 5, scrollX = TRUE)
+  )
+```
+
+## 7. Final dataset 
+
+```{r}
+#| warning: false
+#| message: false
+geocode_cases_reported_clean <- geocode_cases_reported |> 
+  drop_na()
+
+ddbb_geocoded <- bind_rows(
+  geocode_cases_reported_clean,
+  geocode_review_data)
+
+ddbb_geocoded_sf <- ddbb_geocoded |>
+  drop_na(lat,long) |> 
+  st_as_sf(coords = c('lat','long'),crs = 4326)
+```
+
+## 8. Geovisualization
+
+```{r}
+#| warning: false
+#| message: false
+ddbb_geocoded |> 
+  leaflet() |> 
+  addTiles() |> 
+  addMarkers()
+```
+
+
+## 9. Export final data 
+
+```{r}
+#| warning: false
+#| message: false
+write_csv(ddbb_geocoded,'output/cases_report_geocoded.csv')
+write_sf(ddbb_geocoded_sf,'output/cases_report_geocoded.gpkg')
+```
